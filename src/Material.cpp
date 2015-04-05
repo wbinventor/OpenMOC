@@ -51,6 +51,8 @@ Material::Material(int id, const char* name) {
   _sigma_f = NULL;
   _nu_sigma_f = NULL;
   _chi = NULL;
+  _chi_matrix = NULL;
+  _use_chi_matrix = false;
   _dif_coef = NULL;
   _dif_hat = NULL;
   _dif_tilde = NULL;
@@ -92,6 +94,9 @@ Material::~Material() {
     if (_chi != NULL)
       MM_FREE(_chi);
 
+    if (_chi_matrix != NULL)
+      MM_FREE(_chi_matrix);
+
     /* Whomever SIMD'izes OpenMOC will need to properly free these
      * using mm_free if they are vector aligned */
     if (_dif_coef != NULL)
@@ -127,6 +132,9 @@ Material::~Material() {
 
     if (_chi != NULL)
       delete [] _chi;
+
+    if (_chi_matrix != NULL)
+      delete [] _chi_matrix;
 
     if (_dif_coef != NULL)
       delete [] _dif_coef;
@@ -250,6 +258,19 @@ FP_PRECISION* Material::getChi() {
   return _chi;
 }
 
+
+/**
+ * @brief Return the array of the Material's chi matrix \f$ \chi \f$.
+ * @return the pointer to the Material's array of chi \f$ \chi \f$ values
+ */
+FP_PRECISION* Material::getChiMatrix() {
+  if (_chi_matrix == NULL)
+    log_printf(ERROR, "Unable to return Material %d's chi matrix spectrum "
+               "since it has not yet been set", _id);
+
+  return _chi_matrix;
+
+}
 
 /**
  * @brief Return the array of the Material's diffusion coefficients.
@@ -440,6 +461,27 @@ FP_PRECISION Material::getChiByGroup(int group) {
 
 
 /**
+ * @brief Get the Material's fission spectrum matrix for some energy group.
+ * @param origin the incoming energy group
+ * @param destination the outgoing energy group
+ * @return the fission spectrum
+ */
+FP_PRECISION Material::getChiMatrixByGroup(int origin, int destination) {   
+  if (_chi_matrix == NULL)
+    log_printf(ERROR, "Unable to return Material %d's fission spectrum "
+               "matrix since it has not yet been set", _id);
+  
+  if (origin <= 0 || destination <= 0 || origin > _num_groups || destination > _num_groups)
+    log_printf(ERROR, "Unable to get fission spectrum for group %d,%d for "
+               "Material %d which contains %d energy groups",
+               origin, destination, _id, _num_groups);
+   
+  return getChiMatrixByGroupInline(origin-1,destination-1);
+  
+}
+
+
+/**
  * @brief Get the Material's diffustion coefficient for some energy group.
  * @param group the energy group
  * @return the diffusion coefficient
@@ -594,6 +636,9 @@ void Material::setNumEnergyGroups(const int num_groups) {
 
     if (_chi != NULL)
       MM_FREE(_chi);
+
+    if (_chi_matrix != NULL)
+      MM_FREE(_chi_matrix);
   }
 
   /* Data is not vector aligned */
@@ -616,6 +661,9 @@ void Material::setNumEnergyGroups(const int num_groups) {
     if (_chi != NULL)
       delete [] _chi;
 
+    if (_chi_matrix != NULL)
+      delete [] _chi_matrix;
+
     if (_dif_coef != NULL)
       delete [] _dif_coef;
 
@@ -635,6 +683,7 @@ void Material::setNumEnergyGroups(const int num_groups) {
   _sigma_f = new FP_PRECISION[_num_groups];
   _nu_sigma_f = new FP_PRECISION[_num_groups];
   _chi = new FP_PRECISION[_num_groups];
+  _chi_matrix = new FP_PRECISION[_num_groups*num_groups];
   _sigma_s = new FP_PRECISION[_num_groups*_num_groups];
 
 
@@ -644,6 +693,7 @@ void Material::setNumEnergyGroups(const int num_groups) {
   memset(_sigma_f, 0.0, sizeof(FP_PRECISION) * _num_groups);
   memset(_nu_sigma_f, 0.0, sizeof(FP_PRECISION) * _num_groups);
   memset(_chi, 0.0, sizeof(FP_PRECISION) * _num_groups);
+  memset(_chi_matrix, 0.0, sizeof(FP_PRECISION) * _num_groups * _num_groups);
   memset(_sigma_s, 0.0, sizeof(FP_PRECISION) * _num_groups * _num_groups);
 }
 
@@ -1018,6 +1068,85 @@ void Material::setChiByGroup(double xs, int group) {
 
 
 /**
+ * @brief Set the Material's 2D fission spectrum matrix.
+ * @details The array should be passed to OpenMOC as a 1D array in 
+ *          column-major order.  This assumes the standard convention, 
+ *          where column index is the origin group and the row index is
+ *          the destination group.  That is, the array should be ordered
+ *          as follows:
+ *              1 -> 1
+ *              1 -> 2
+ *              1 -> 3
+ *                ...
+ *              2 -> 1
+ *              2 -> 2
+ *                ...         
+ *
+ *          Note that if the fission spectrum matrix is defined in NumPy by
+ *          the standard convention, "flat" will put the matrix into row
+ *          major order.  Thus, one should transpose the matrix before
+ *          flattening. 
+ * 
+ *          For cache efficiency, the transpose of the input is actually
+ *          stored in OpenMOC.
+ * 
+ *          This method is a helper function to allow OpenMOC users to assign
+ *          the Material's nuclear data in Python. A user must initialize a
+ *          NumPy array of the correct size (i.e., a float64 array the length
+ *          of the square of the number of energy groups) as input to this 
+ *          function. This function then fills the NumPy array with the data 
+ *          values for the Material's fission spectrum matrix. An example 
+ *          of how this function might be called in Python is as follows:
+ *
+ * @code
+ *          chi_matrix = numpy.array([[0.05,    0,    0,     ... ],
+ *                                    [0.10, 0.08,   ...     ... ],
+ *                                                ...
+ *                                    [...        ...        ... ]])
+ *          chi_matrix = numpy.transpose(chi_matrix)
+ *          material = openmoc.Material(openmoc.material_id())
+ *          material.setChiMatrix(chi_matrix.flat)
+ * @endcode
+ *
+ * @param xs the chi fission spectrum matrix
+ * @param num_groups_squared the number of energy groups squared
+ */
+void Material::setChiMatrix(double* xs, int num_groups_squared) {
+
+  if (_num_groups*_num_groups != num_groups_squared)
+    log_printf(ERROR, "Unable to set chi with %f groups for Material %d "
+               "which contains %d energy groups",
+                float(sqrt(num_groups_squared)), _id, _num_groups);
+
+  for (int dest=0; dest < _num_groups; dest++) {
+    for (int orig=0; orig < _num_groups; orig++)
+      _chi_matrix[dest*_num_groups+orig] = xs[orig*_num_groups+dest];
+  }
+
+  _use_chi_matrix = true;
+}
+
+
+/**
+ * @brief Set the Material's fission spectrum matrix for some energy group.
+ * @param xs the fission spectrum (chi) matrix
+ * @param origin the column index in the fission spectrum matrix
+ * @param destination the row index in the fission spectrum matrix
+ */
+void Material::setChiMatrixByGroup(double xs, int origin, int destination) {
+
+  if (origin <= 0 || destination <= 0 || origin > _num_groups || destination > _num_groups)
+    log_printf(ERROR, "Unable to set chi for group %d -> %d for Material %d "
+               "which contains %d energy groups",
+               origin, destination, _id, _num_groups);
+
+  _chi_matrix[_num_groups*(destination-1) + (origin-1)] = xs;
+
+  _use_chi_matrix = true;
+}
+
+
+/**
  * @brief Set the Material's array of diffusion coefficients.
  * @details This method is a helper function to allow OpenMOC users to assign
  *          the Material's nuclear data in Python. A user must initialize a
@@ -1350,6 +1479,15 @@ std::string Material::toString() {
       string << _chi[e] << ", ";
   }
 
+  if (_chi_matrix != NULL) {
+    string << "\n\t\tChi matrix = \n\t\t";
+    for (int G = 0; G < _num_groups; G++) {
+      for (int g = 0; g < _num_groups; g++)
+        string << _chi_matrix[G+g*_num_groups] << "\t\t ";
+      string << "\n\t\t";
+    }
+  }
+
   if (_dif_coef != NULL) {
     string << "Diffusion Coefficient = ";
     for (int e = 0; e < _num_groups; e++)
@@ -1408,13 +1546,14 @@ void Material::alignData() {
   FP_PRECISION* new_nu_sigma_f=(FP_PRECISION*)MM_MALLOC(size, VEC_ALIGNMENT);
   FP_PRECISION* new_chi = (FP_PRECISION*)MM_MALLOC(size, VEC_ALIGNMENT);
 
-  /* The scattering matrix will be the number of vector groups
-   * wide (SIMD) and the actual number of groups long since
+  /* The scattering and fission spectrum matrices will be the number of
+   * vector groups wide (SIMD) and the actual number of groups long since
    * instructions are not SIMD in this dimension */
 
   size = _num_vector_groups * VEC_LENGTH * _num_vector_groups;
   size *= VEC_LENGTH * sizeof(FP_PRECISION);
   FP_PRECISION* new_sigma_s = (FP_PRECISION*)MM_MALLOC(size, VEC_ALIGNMENT);
+  FP_PRECISION* new_chi_matrix = (FP_PRECISION*)MM_MALLOC(size, VEC_ALIGNMENT);
 
   /* Initialize data structures to ones for sigma_t since it is used to
    * divide the source in the solver, and zeroes for everything else */
@@ -1429,6 +1568,7 @@ void Material::alignData() {
 
   size *= _num_vector_groups * VEC_LENGTH;
   memset(new_sigma_s, 0.0, size);
+  memset(new_chi_matrix, 0.0, size);
 
   /* Copy materials data from unaligned arrays into new aligned arrays */
   size = _num_groups * sizeof(FP_PRECISION);
@@ -1440,14 +1580,19 @@ void Material::alignData() {
 
   for (int e=0; e < _num_groups; e++) {
     memcpy(new_sigma_s, _sigma_s, size);
+    memcpy(new_chi_matrix, _chi_matrix, size);
     new_sigma_s += _num_vector_groups * VEC_LENGTH;
+    new_chi_matrix += _num_vector_groups * VEC_LENGTH;
     _sigma_s += _num_groups;
+    _chi_matrix += _num_groups;
   }
 
   _sigma_s -= _num_groups * _num_groups;
+  _chi_matrix -= _num_groups * _num_groups;
 
-  /* Reset the new scattering cross section array pointer */
+  /* Reset the new scattering cross section and chi matrix array pointers */
   new_sigma_s -= _num_vector_groups * VEC_LENGTH * _num_groups;
+  new_chi_matrix -= _num_vector_groups * VEC_LENGTH * _num_groups;
 
   /* Delete the old unaligned arrays */
   delete [] _sigma_t;
@@ -1455,6 +1600,7 @@ void Material::alignData() {
   delete [] _sigma_f;
   delete [] _nu_sigma_f;
   delete [] _chi;
+  delete [] _chi_matrix;
   delete [] _sigma_s;
 
   /* Set the material's array pointers to the new aligned arrays */
@@ -1463,6 +1609,7 @@ void Material::alignData() {
   _sigma_f = new_sigma_f;
   _nu_sigma_f = new_nu_sigma_f;
   _chi = new_chi;
+  _chi_matrix = new_chi_matrix;
   _sigma_s = new_sigma_s;
 
   _data_aligned = true;
@@ -1491,6 +1638,12 @@ Material* Material::clone(){
     for (int j=0; j < _num_groups; j++)
       clone->setSigmaSByGroup(
         (double)getSigmaSByGroupInline(i,j), i+1, j+1);
+
+    if (_chi_matrix != NULL) {
+      for (int j=0; j < _num_groups; j++)
+        clone->setChiMatrixByGroup(
+          (double)getChiMatrixByGroupInline(i,j), i+1, j+1);
+    }
 
     if (_dif_coef != NULL)
       clone->setDifCoefByGroup((double)_dif_coef[i], i+1);

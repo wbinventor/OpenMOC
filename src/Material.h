@@ -85,6 +85,11 @@ private:
   /** An array of the chi \f$ \chi \f$ values for each energy group */
   FP_PRECISION* _chi;
 
+  /** An array of the chi \f$ \chi \f$ values for each energy group */
+  FP_PRECISION* _chi_matrix;
+
+  bool _use_chi_matrix;
+
   /** An array of the diffusion coefficients for each energy group */
   FP_PRECISION* _dif_coef;
 
@@ -123,6 +128,7 @@ public:
   FP_PRECISION* getSigmaF();
   FP_PRECISION* getNuSigmaF();
   FP_PRECISION* getChi();
+  FP_PRECISION* getChiMatrix();
   FP_PRECISION* getDifCoef();
   FP_PRECISION* getBuckling();
   FP_PRECISION* getDifHat();
@@ -134,6 +140,8 @@ public:
   FP_PRECISION getSigmaFByGroup(int group);
   FP_PRECISION getNuSigmaFByGroup(int group);
   FP_PRECISION getChiByGroup(int group);
+  FP_PRECISION getChiMatrixByGroup(int origin, int destination);
+  FP_PRECISION getChiMatrixByGroupInline(int origin, int destination);
   FP_PRECISION getDifCoefByGroup(int group);
   FP_PRECISION getBucklingByGroup(int group);
   FP_PRECISION getDifHatByGroup(int group, int surface);
@@ -151,6 +159,7 @@ public:
   void setSigmaF(double* xs, int num_groups);
   void setNuSigmaF(double* xs, int num_groups);
   void setChi(double* xs, int num_groups);
+  void setChiMatrix(double* xs, int num_groups);
   void setBuckling(double* xs, int num_groups);
   void setDifCoef(double* xs, int num_groups);
   void setDifHat(double* xs, int num_groups);
@@ -162,6 +171,7 @@ public:
   void setNuSigmaFByGroup(double xs, int group);
   void setSigmaSByGroup(double xs, int origin, int destination);
   void setChiByGroup(double xs, int group);
+  void setChiMatrixByGroup(double xs, int origin, int destination);
   void setBucklingByGroup(double xs, int group);
   void setDifCoefByGroup(double xs, int group);
   void setDifHatByGroup(double xs, int group, int surface);
@@ -178,7 +188,7 @@ public:
 
 
 /**
- * @brief inline function for efficient mapping for scattering, from
+ * @brief Inline function for efficient mapping for scattering, from
  *        1D as stored in memory to 2D matrix
  * @details Encapsulates the logic for indexing into the scattering
  *        matrix so it does not need to be repeated in other parts of 
@@ -191,6 +201,23 @@ public:
 inline FP_PRECISION Material::getSigmaSByGroupInline(
           int origin, int destination) {
   return _sigma_s[destination*_num_groups + origin];
+}
+
+
+/**
+ * @brief Inline function for efficient mapping for fission spectrum, from
+ *        1D as stored in memory to 2D matrix
+ * @details Encapsulates the logic for indexing into the fission spectrum
+ *        matrix so it does not need to be repeated in other parts of 
+ *        the code.  Note that this routine is 0-based, rather than 
+ *        1-based indexing, as it is intended for use inside the code,
+ *        not by users from Python.
+ * @param origin the column index of the matrix element
+ * @param destination the row index of the matrix element
+ */
+inline FP_PRECISION Material::getChiMatrixByGroupInline(
+          int origin, int destination) {
+  return _chi[destination*_num_groups + origin];
 }
 
 #endif /* MATERIAL_H_ */
