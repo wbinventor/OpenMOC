@@ -111,15 +111,27 @@ FP_PRECISION CPUSolver::getFSRSource(int fsr_id, int energy_group) {
 
   Material* material = _FSR_materials[fsr_id];
   FP_PRECISION* nu_sigma_f = material->getNuSigmaF();
-  FP_PRECISION* chi = material->getChi();
+  FP_PRECISION* chi;
+
+  if (material->hasChiMatrix())
+    chi = material->getChiMatrix();
+  else
+    chi = material->getChi();
+
   FP_PRECISION fission_source = 0.0;
   FP_PRECISION scatter_source = 0.0;
   FP_PRECISION total_source = 0.0;
 
   /* Compute fission source for each group */
   if (material->isFissionable()) {
-    for (int e=0; e < _num_groups; e++)
-      fission_source += _scalar_flux(fsr_id,e) * nu_sigma_f[e];
+    for (int e=0; e < _num_groups; e++) {
+      if (material->hasChiMatrix())
+        fission_source += _scalar_flux(fsr_id,e) * nu_sigma_f[e] * 
+                          material->getChiMatrixByGroupInline(e,energy_group-1);
+      else
+        fission_source += _scalar_flux(fsr_id,e) * nu_sigma_f[e] * 
+                          chi[energy_group-1];
+    }
 
     fission_source /= _k_eff;
   }
@@ -129,8 +141,7 @@ FP_PRECISION CPUSolver::getFSRSource(int fsr_id, int energy_group) {
         * _scalar_flux(fsr_id,g);
 
   /* Compute the total source */
-  total_source = (fission_source * chi[energy_group-1] + scatter_source) *
-      ONE_OVER_FOUR_PI;
+  total_source = (fission_source + scatter_source) * ONE_OVER_FOUR_PI;
 
   return total_source;
 }
@@ -623,51 +634,48 @@ FP_PRECISION CPUSolver::computeFSRSources() {
   FP_PRECISION inverse_k_eff = 1.0 / _k_eff;
 
   /* For all FSRs, find the source */
-  #pragma omp parallel for private(tid, material, nu_sigma_f, chi, \
-    sigma_s, sigma_t, fission_source, scatter_source, fsr_fission_source) \
-    schedule(guided)
+  //  #pragma omp parallel for private(tid, material, nu_sigma_f, chi,	\
+  //  sigma_s, sigma_t, fission_source, scatter_source, fsr_fission_source) \
+  //  schedule(guided)
   for (int r=0; r < _num_FSRs; r++) {
 
-    tid = omp_get_thread_num();
+    // tid = omp_get_thread_num();
     material = _FSR_materials[r];
     nu_sigma_f = material->getNuSigmaF();
-    chi = material->getChi();
     sigma_s = material->getSigmaS();
     sigma_t = material->getSigmaT();
 
+    if (material->hasChiMatrix())
+      chi = material->getChiMatrix();
+    else
+      chi = material->getChi();
+
     /* Initialize the source residual to zero */
     _source_residuals[r] = 0.;
-    fsr_fission_source = 0.0;
+    fsr_fission_source = 0.;
 
-    /* Compute fission source for each group */
-    if (material->isFissionable()) {
-      for (int e=0; e < _num_groups; e++)
-        _fission_sources(r,e) = _scalar_flux(r,e) * nu_sigma_f[e];
-
-      fission_source = pairwise_sum<FP_PRECISION>(&_fission_sources(r,0),
-                                                  _num_groups);
-      fission_source *= inverse_k_eff;
-    }
-
-    else
-      fission_source = 0.0;
-
-    /* Compute total scattering source for group G */
+    /* Compute total source for group G */
     for (int G=0; G < _num_groups; G++) {
       scatter_source = 0;
+      fission_source = 0;
 
-      for (int g=0; g < _num_groups; g++)
-        _scatter_sources(tid,g) = material->getSigmaSByGroupInline(g,G)
-                      * _scalar_flux(r,g);
+      for (int g=0; g < _num_groups; g++) {
+        scatter_source += material->getSigmaSByGroupInline(g,G)
+                          * _scalar_flux(r,g);
 
-      scatter_source=pairwise_sum<FP_PRECISION>(&_scatter_sources(tid,0),
-                                                _num_groups);
+        if (material->hasChiMatrix())
+          fission_source += _scalar_flux(r,g) * nu_sigma_f[g]
+	                    * material->getChiMatrixByGroupInline(g,G);
+        else
+          fission_source += _scalar_flux(r,g) * nu_sigma_f[g] * chi[G];
+      }
 
-      /* Set the fission source for FSR r in group G */
-      fsr_fission_source += fission_source * chi[G];
+      fission_source *= inverse_k_eff;
 
-      _reduced_sources(r,G) = (fission_source * chi[G] + scatter_source) *
+      _reduced_sources(r,G) = (fission_source + scatter_source) *
                               ONE_OVER_FOUR_PI / sigma_t[G];
+
+      fsr_fission_source += fission_source * chi[G];
     }
 
     /* Compute the norm of residual of the source in the FSR */

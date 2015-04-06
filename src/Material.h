@@ -88,7 +88,7 @@ private:
   /** An array of the chi \f$ \chi \f$ values for each energy group */
   FP_PRECISION* _chi_matrix;
 
-  bool _use_chi_matrix;
+  bool _has_chi_matrix;
 
   /** An array of the diffusion coefficients for each energy group */
   FP_PRECISION* _dif_coef;
@@ -145,8 +145,9 @@ public:
   FP_PRECISION getDifCoefByGroup(int group);
   FP_PRECISION getBucklingByGroup(int group);
   FP_PRECISION getDifHatByGroup(int group, int surface);
-  FP_PRECISION getDifTildeByGroup(int group);  
+  FP_PRECISION getDifTildeByGroup(int group);
   bool isFissionable();
+  bool hasChiMatrix();
   bool isDataAligned();
   int getNumVectorGroups();
 
@@ -217,7 +218,7 @@ inline FP_PRECISION Material::getSigmaSByGroupInline(
  */
 inline FP_PRECISION Material::getChiMatrixByGroupInline(
           int origin, int destination) {
-  return _chi[destination*_num_groups + origin];
+  return _chi_matrix[destination*_num_groups + origin];
 }
 
 #endif /* MATERIAL_H_ */

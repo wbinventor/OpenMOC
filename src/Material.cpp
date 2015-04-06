@@ -52,7 +52,7 @@ Material::Material(int id, const char* name) {
   _nu_sigma_f = NULL;
   _chi = NULL;
   _chi_matrix = NULL;
-  _use_chi_matrix = false;
+  _has_chi_matrix = false;
   _dif_coef = NULL;
   _dif_hat = NULL;
   _dif_tilde = NULL;
@@ -571,6 +571,15 @@ bool Material::isFissionable() {
  */
 bool Material::isDataAligned() {
   return _data_aligned;
+}
+
+
+/**
+ * @brief Returns true if the Material has a chi fission spectrum matrix.
+ * @return Whether or not the Material's has a chi fission spectrum matrix
+ */
+bool Material::hasChiMatrix() {
+  return _has_chi_matrix;
 }
 
 
@@ -1123,7 +1132,7 @@ void Material::setChiMatrix(double* xs, int num_groups_squared) {
       _chi_matrix[dest*_num_groups+orig] = xs[orig*_num_groups+dest];
   }
 
-  _use_chi_matrix = true;
+  _has_chi_matrix = true;
 }
 
 
@@ -1142,7 +1151,7 @@ void Material::setChiMatrixByGroup(double xs, int origin, int destination) {
 
   _chi_matrix[_num_groups*(destination-1) + (origin-1)] = xs;
 
-  _use_chi_matrix = true;
+  _has_chi_matrix = true;
 }
 
 
