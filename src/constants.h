@@ -38,5 +38,10 @@
 /** The default maximum optical path length */
 #define MAX_OPTICAL_LENGTH FP_PRECISION(10.)
 
+/** The minimum acceptable precision for exponential evaluations from
+ *  the ExpEvaluator's linear interpolation table. This default precision
+ *  was selected based on analysis by Yamamoto's 2004 paper on the topic. */
+#define EXP_PRECISION FP_PRECISION(1E-5)
+
 
 #endif /* CONSTANTS_H_ */

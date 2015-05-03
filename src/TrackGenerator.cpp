@@ -151,30 +151,6 @@ FP_PRECISION* TrackGenerator::getAzimWeights() {
 }
 
 
-/**
- * @brief Get the maximum allowable optical length for a track segment
- * @return The max optical length
- */
-FP_PRECISION TrackGenerator::getMaxOpticalLength() {
-  return _max_optical_length;
-}
-
-/**
- * @brief Get the total number of tracks in the TrackGenerator
- * @return the total number of tracks
- */
-int TrackGenerator::getTotNumTracks() {
-  return _tot_num_tracks;
-}
-
-/**
- * @brief Get the total number of track segments in the TrackGenerator
- * @return the total number of track segments
- */
-int TrackGenerator::getTotNumSegments() {
-  return _tot_num_segments;
-}
-
 
 /**
  * @brief Returns the number of shared memory OpenMP threads in use.
