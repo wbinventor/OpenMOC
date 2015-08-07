@@ -214,6 +214,10 @@ class IRAMSolver(object):
   # @return the flux computed from fission/scatter fixed source calculations
   def _F(self, flux):
   
+    # The order of operations is dependent on whether or not an adjoint or
+    # forward solution is wanted.  If a forward solution is wanted, we
+    # first invert A, then multiply by M.  If adjoint, the other way 
+    # around.
     if self._solver_mode == openmoc.FORWARD:
       # Apply operator to flux - get updated flux from fission source
       flux = self._M_op * flux
