@@ -75,6 +75,7 @@ class IRAMSolver(object):
     self._m_count = None
     self._eigenvalues = None
     self._eigenvectors = None
+    self._solver_mode = None
 
 
   ##
@@ -106,6 +107,7 @@ class IRAMSolver(object):
     self._outer_tol = outer_tol
     self._inner_tol = inner_tol
     self._interval = interval
+    self._solver_mode = solver_mode
 
     # Initialize inner/outer iteration counters to zero
     self._m_count = 0
@@ -212,8 +214,13 @@ class IRAMSolver(object):
   # @return the flux computed from fission/scatter fixed source calculations
   def _F(self, flux):
   
-    # Apply operator to flux - get updated flux from fission source
-    flux = self._M_op * flux
+    # The order of operations is dependent on whether or not an adjoint or
+    # forward solution is wanted.  If a forward solution is wanted, we
+    # first invert A, then multiply by M.  If adjoint, the other way 
+    # around.
+    if self._solver_mode == openmoc.FORWARD:
+      # Apply operator to flux - get updated flux from fission source
+      flux = self._M_op * flux
 
     # Solve AX=B fixed scatter source problem using Krylov subspace method
     if self._inner_method == 'gmres':
@@ -227,6 +234,10 @@ class IRAMSolver(object):
     else:
       py_printf('ERROR', 'Unable to use %s to solve Ax=b', self._inner_method)
 
+    if self._solver_mode == openmoc.ADJOINT:
+      # Apply operator to flux - get updated flux from fission source
+      flux = self._M_op * flux
+    
     # Check that solve completed without error before returning new flux
     if x != 0:
       py_printf('ERROR', 'Unable to solve Ax=b with %s', self._inner_method)
