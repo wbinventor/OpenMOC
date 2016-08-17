@@ -3,6 +3,8 @@ import os
 import copy
 import collections
 import hashlib
+import itertools
+import multiprocessing
 
 import numpy as np
 
@@ -290,6 +292,160 @@ def load_openmc_mgxs_lib(mgxs_lib, geometry=None):
             py_printf('ERROR', 'Unable to load a cross sections library with '
                       'domain type %s', mgxs_lib.domain_type)
 
+
+    # FIXME
+    def load_mgxs(openmc_domains, mgxs_lib):
+        old_materials = {}
+        num_groups = mgxs_lib.num_groups
+        domain_type = mgxs_lib.domain_type
+        num_materials = 0
+
+        for domain in openmc_domains:
+
+            # If using an OpenMOC Geometry, extract a Material from it
+            if geometry:
+
+                # Cache the number of materials as an optimization
+                if num_materials == 0:
+                    num_materials = geometry.getNumMaterials()
+
+                if domain_type == 'material':
+                    material = _get_domain(domains, domain.id)
+
+                    # Ignore materials which cannot be found in the OpenMOC Geometry
+                    if material is None:
+                        domain_name = domain.name.replace('%', '%%')
+                        py_printf('WARNING', 'Ignoring cross sections for %s "%d" "%s"',
+                                  domain_type, domain.id, str(domain_name))
+                        continue
+
+                elif domain_type == 'cell':
+                    cell = _get_domain(domains, domain.id)
+
+                    # Ignore cells which cannot be found in the OpenMOC Geometry
+                    if cell is None:
+                        domain_name = domain.name.replace('%', '%%')
+                        py_printf('WARNING', 'Ignoring cross sections for %s "%d" "%s"',
+                                  domain_type, domain.id, str(domain_name))
+                        continue
+                    else:
+                        material = cell.getFillMaterial()
+
+                    # If the user filled multiple Cells with the same Material,
+                    # the Material must be cloned for each unique Cell
+                    if material != None:
+                        if len(domains) > num_materials:
+                            old_materials[material.getId()] = material
+                            material = material.clone()
+
+                    # If the Cell does not contain a Material, create one for it
+                    else:
+                        material = openmoc.Material(id=domain.id)
+
+                    # Fill the Cell with the new Material
+                    cell.setFill(material)
+
+            # If not Geometry, instantiate a new Material with the ID/name
+            else:
+                material = openmoc.Material(id=domain.id)
+
+            domain_name = domain.name.replace('%', '%%')
+            py_printf('INFO', 'Importing cross sections for %s "%d" "%s"',
+                      domain_type, domain.id, str(domain_name))
+
+            # Add material to the collection
+            material.setNumEnergyGroups(num_groups)
+
+            # Search for the total/transport cross section
+            if 'transport' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'transport')
+                sigma = mgxs.get_xs(nuclides='sum')
+                material.setSigmaT(sigma)
+                py_printf('DEBUG', 'Loaded "transport" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            elif 'nu-transport' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'nu-transport')
+                sigma = mgxs.get_xs(nuclides='sum')
+                material.setSigmaT(sigma)
+                py_printf('DEBUG', 'Loaded "nu-transport" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            elif 'total' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'total')
+                sigma = mgxs.get_xs(nuclides='sum')
+                material.setSigmaT(sigma)
+                py_printf('DEBUG', 'Loaded "total" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            else:
+                py_printf('WARNING', 'No "total" or "transport" MGXS found for'
+                          '"%s %d"', domain_type, domain.id)
+
+            # Search for the fission production cross section
+            if 'nu-fission' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'nu-fission')
+                sigma = mgxs.get_xs(nuclides='sum')
+                material.setNuSigmaF(sigma)
+                py_printf('DEBUG', 'Loaded "nu-fission" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            else:
+                py_printf('WARNING', 'No "nu-fission" MGXS found for'
+                          '"%s %d"', domain_type, domain.id)
+
+            # Search for the scattering matrix cross section
+            if 'nu-scatter matrix' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'nu-scatter matrix')
+                sigma = mgxs.get_xs(nuclides='sum').flatten()
+                material.setSigmaS(sigma)
+                py_printf('DEBUG', 'Loaded "nu-scatter matrix" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            elif 'scatter matrix' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'scatter matrix')
+                sigma = mgxs.get_xs(nuclides='sum').flatten()
+                material.setSigmaS(sigma)
+                py_printf('DEBUG', 'Loaded "scatter matrix" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            else:
+                py_printf('WARNING', 'No "scatter matrix" or "nu-scatter matrix" '
+                          'found for "%s %d"', domain_type, domain.id)
+
+            # Search for chi (fission spectrum)
+            if 'chi' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'chi')
+                chi = mgxs.get_xs(nuclides='sum')
+                material.setChi(chi)
+                py_printf('DEBUG', 'Loaded "chi" MGXS for "%s %d"',
+                          domain_type, domain.id)
+            else:
+                py_printf('WARNING', 'No "chi" MGXS found for "%s %d"',
+                          domain_type, domain.id)
+
+            # Search for optional cross sections
+            if 'fission' in mgxs_lib.mgxs_types:
+                mgxs = mgxs_lib.get_mgxs(domain, 'fission')
+                sigma = mgxs.get_xs(nuclides='sum')
+                material.setSigmaF(sigma)
+                py_printf('DEBUG', 'Loaded "fission" MGXS for "%s %d"',
+                          domain_type, domain.id)
+
+        # Inform SWIG to garbage collect any old Materials from the Geometry
+        for material_id in old_materials:
+            old_materials[material_id].thisown = False
+
+    num_cpus = multiprocessing.cpu_count()
+    procs = []
+
+    for item in np.array_split(np.array(mgxs_lib.domains), num_cpus):
+        p = multiprocessing.Process(
+            target=load_mgxs, args=(item, mgxs_lib))
+        procs.append(p)
+
+    for p in procs:
+        p.start()
+
+    for p in procs:
+        p.join()
+
+
+    '''
     # Iterate over all domains (e.g., materials or cells) in the HDF5 file
     num_materials = 0
     for domain in mgxs_lib.domains:
@@ -425,6 +581,7 @@ def load_openmc_mgxs_lib(mgxs_lib, geometry=None):
 
     # Return collection of materials
     return materials
+    '''
 
 
 def compute_sph_factors(mgxs_lib, max_sph_iters=30, sph_tol=1E-5,
